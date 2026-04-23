@@ -1,7 +1,14 @@
-import requests
+import os
 from datetime import datetime
 
+import requests
+from dotenv import load_dotenv
 from django.shortcuts import render
+
+# Load environment variables from .env
+load_dotenv()
+
+API_KEY = os.getenv('OPENWEATHER_API_KEY')
 
 
 def get_background_class(weather_main):
@@ -93,7 +100,10 @@ def generate_ai_summary(weather):
         wind_advice = 'Winds are light.'
 
     if humidity >= 85:
-        humidity_advice = 'Humidity is very high, so it may feel heavier than the actual temperature.'
+        humidity_advice = (
+            'Humidity is very high, so it may feel heavier than the actual '
+            'temperature.'
+        )
     elif humidity >= 60:
         humidity_advice = 'Humidity is moderate.'
     else:
@@ -108,7 +118,6 @@ def generate_ai_summary(weather):
 
 def home(request):
     """Render home page with current weather, AI summary, and daily forecast."""
-
     current_weather = None
     forecast_list = []
     ai_summary = None
@@ -118,94 +127,116 @@ def home(request):
         city = request.POST.get('city')
 
         if city:
-            api_key = '037290af282c913bdefdedc3b673df98'
+            if not API_KEY:
+                error_message = (
+                    'API key not found. Please add OPENWEATHER_API_KEY to your '
+                    '.env file.'
+                )
+            else:
+                current_url = (
+                    'https://api.openweathermap.org/data/2.5/weather'
+                    f'?q={city}&appid={API_KEY}&units=metric'
+                )
 
-            current_url = (
-                f'https://api.openweathermap.org/data/2.5/weather'
-                f'?q={city}&appid={api_key}&units=metric'
-            )
+                forecast_url = (
+                    'https://api.openweathermap.org/data/2.5/forecast'
+                    f'?q={city}&appid={API_KEY}&units=metric'
+                )
 
-            forecast_url = (
-                f'https://api.openweathermap.org/data/2.5/forecast'
-                f'?q={city}&appid={api_key}&units=metric'
-            )
+                try:
+                    current_response = requests.get(current_url, timeout=10)
+                    forecast_response = requests.get(forecast_url, timeout=10)
 
-            try:
-                current_response = requests.get(current_url, timeout=10)
-                forecast_response = requests.get(forecast_url, timeout=10)
+                    current_data = current_response.json()
+                    forecast_data = forecast_response.json()
 
-                current_data = current_response.json()
-                forecast_data = forecast_response.json()
+                    if current_data.get('cod') == 200:
+                        weather_main = current_data['weather'][0]['main']
+                        description = current_data['weather'][0]['description']
 
-                if current_data.get('cod') == 200:
-                    weather_main = current_data['weather'][0]['main']
-                    description = current_data['weather'][0]['description']
+                        current_weather = {
+                            'city': current_data['name'],
+                            'temperature': round(current_data['main']['temp'], 1),
+                            'description': description,
+                            'humidity': current_data['main']['humidity'],
+                            'wind': round(current_data['wind']['speed'], 2),
+                            'feels_like': round(
+                                current_data['main']['feels_like'], 1
+                            ),
+                            'temp_min': round(current_data['main']['temp_min'], 1),
+                            'temp_max': round(current_data['main']['temp_max'], 1),
+                            'background_class': get_background_class(weather_main),
+                            'emoji_icon': get_weather_emoji(weather_main),
+                        }
 
-                    current_weather = {
-                        'city': current_data['name'],
-                        'temperature': round(current_data['main']['temp'], 1),
-                        'description': description,
-                        'humidity': current_data['main']['humidity'],
-                        'wind': round(current_data['wind']['speed'], 2),
-                        'feels_like': round(current_data['main']['feels_like'], 1),
-                        'temp_min': round(current_data['main']['temp_min'], 1),
-                        'temp_max': round(current_data['main']['temp_max'], 1),
-                        'background_class': get_background_class(weather_main),
-                        'emoji_icon': get_weather_emoji(weather_main),
-                    }
+                        ai_summary = generate_ai_summary(current_weather)
 
-                    ai_summary = generate_ai_summary(current_weather)
+                        if forecast_data.get('cod') == '200':
+                            daily_forecasts = {}
 
-                    if forecast_data.get('cod') == '200':
-                        daily_forecasts = {}
-
-                        for item in forecast_data['list']:
-                            date_obj = datetime.strptime(
-                                item['dt_txt'],
-                                '%Y-%m-%d %H:%M:%S'
-                            )
-                            day_key = date_obj.strftime('%Y-%m-%d')
-                            hour = date_obj.hour
-                            forecast_main = item['weather'][0]['main']
-
-                            if day_key not in daily_forecasts and hour == 12:
-                                daily_forecasts[day_key] = {
-                                    'day_name': date_obj.strftime('%a'),
-                                    'date_display': date_obj.strftime('%d %b'),
-                                    'temperature': round(item['main']['temp'], 1),
-                                    'description': item['weather'][0]['description'],
-                                    'emoji_icon': get_weather_emoji(forecast_main),
-                                }
-
-                        if len(daily_forecasts) < 5:
                             for item in forecast_data['list']:
                                 date_obj = datetime.strptime(
                                     item['dt_txt'],
-                                    '%Y-%m-%d %H:%M:%S'
+                                    '%Y-%m-%d %H:%M:%S',
                                 )
                                 day_key = date_obj.strftime('%Y-%m-%d')
+                                hour = date_obj.hour
                                 forecast_main = item['weather'][0]['main']
 
-                                if day_key not in daily_forecasts:
+                                if day_key not in daily_forecasts and hour == 12:
                                     daily_forecasts[day_key] = {
                                         'day_name': date_obj.strftime('%a'),
                                         'date_display': date_obj.strftime('%d %b'),
-                                        'temperature': round(item['main']['temp'], 1),
-                                        'description': item['weather'][0]['description'],
-                                        'emoji_icon': get_weather_emoji(forecast_main),
+                                        'temperature': round(
+                                            item['main']['temp'], 1
+                                        ),
+                                        'description': item['weather'][0][
+                                            'description'
+                                        ],
+                                        'emoji_icon': get_weather_emoji(
+                                            forecast_main
+                                        ),
                                     }
 
-                                if len(daily_forecasts) == 5:
-                                    break
+                            if len(daily_forecasts) < 5:
+                                for item in forecast_data['list']:
+                                    date_obj = datetime.strptime(
+                                        item['dt_txt'],
+                                        '%Y-%m-%d %H:%M:%S',
+                                    )
+                                    day_key = date_obj.strftime('%Y-%m-%d')
+                                    forecast_main = item['weather'][0]['main']
 
-                        forecast_list = list(daily_forecasts.values())[:5]
-                else:
-                    error_message = 'City not found. Please enter a valid city name.'
+                                    if day_key not in daily_forecasts:
+                                        daily_forecasts[day_key] = {
+                                            'day_name': date_obj.strftime('%a'),
+                                            'date_display': date_obj.strftime(
+                                                '%d %b'
+                                            ),
+                                            'temperature': round(
+                                                item['main']['temp'], 1
+                                            ),
+                                            'description': item['weather'][0][
+                                                'description'
+                                            ],
+                                            'emoji_icon': get_weather_emoji(
+                                                forecast_main
+                                            ),
+                                        }
 
-            except requests.RequestException:
-                error_message = (
-                    'Unable to fetch weather data right now. Please try again.'
-                )
+                                    if len(daily_forecasts) == 5:
+                                        break
+
+                            forecast_list = list(daily_forecasts.values())[:5]
+                    else:
+                        error_message = (
+                            'City not found. Please enter a valid city name.'
+                        )
+
+                except requests.RequestException:
+                    error_message = (
+                        'Unable to fetch weather data right now. Please try again.'
+                    )
 
     context = {
         'weather': current_weather,
